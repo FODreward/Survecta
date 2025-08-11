@@ -1,0 +1,175 @@
+"use client"
+
+import { useEffect, useState, useCallback } from "react"
+import { apiCall } from "@/lib/api"
+import { useAuth } from "@/hooks/use-auth"
+import { useToast } from "@/hooks/use-toast"
+import { Button } from "@/components/ui/button" // Import Button
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { formatDateForInput, getPastDate } from "@/lib/utils" // Import date utilities
+
+interface Transfer {
+  id: string
+  from_user: { email: string; name: string }
+  to_user: { email: string; name: string }
+  amount: number
+  created_at: string
+}
+
+interface TransferHistoryData {
+  transfers: Transfer[]
+  total_sent: number
+  total_received: number
+}
+
+export default function TransferHistorySection({ onReturnToDashboard }: { onReturnToDashboard: () => void }) {
+  const [history, setHistory] = useState<TransferHistoryData | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const { currentUser } = useAuth()
+  const { toast } = useToast()
+
+  const defaultEndDate = new Date()
+  const defaultStartDate = getPastDate(30)
+
+  const [startDate, setStartDate] = useState(formatDateForInput(defaultStartDate))
+  const [endDate, setEndDate] = useState(formatDateForInput(defaultEndDate))
+  const [limit, setLimit] = useState("10") // Default to 10 items
+
+  const loadHistory = useCallback(async () => {
+    setIsLoading(true)
+
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+
+    if (start > end) {
+      toast({
+        title: "Invalid Date Range",
+        description: "Start date cannot be after end date.",
+        variant: "destructive",
+      })
+      setIsLoading(false)
+      return
+    }
+
+    const diffTime = Math.abs(end.getTime() - start.getTime())
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+
+    if (diffDays > 30) {
+      toast({
+        title: "Date Range Exceeded",
+        description: "Date range cannot exceed 30 days.",
+        variant: "destructive",
+      })
+      setIsLoading(false)
+      return
+    }
+
+    try {
+      const data = await apiCall<TransferHistoryData>("/points/history", "GET", null, true, {
+        start_date: startDate,
+        end_date: endDate,
+        limit: limit,
+      })
+      setHistory(data)
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load transfer history.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }, [startDate, endDate, limit, toast])
+
+  useEffect(() => {
+    loadHistory()
+  }, [loadHistory])
+
+  return (
+    <div className="bg-card-background p-8 rounded-2xl shadow-lg max-w-3xl mx-auto">
+      <h3 className="text-2xl font-bold mb-6 text-primary flex justify-between items-center">
+        📜 Transfer History
+        <Button onClick={onReturnToDashboard} className="btn-secondary">
+          Return to Dashboard
+        </Button>
+      </h3>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div>
+          <Label htmlFor="startDate">Start Date</Label>
+          <Input type="date" id="startDate" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="endDate">End Date</Label>
+          <Input type="date" id="endDate" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="limit">Items Per Page</Label>
+          <Select value={limit} onValueChange={setLimit}>
+            <SelectTrigger id="limit">
+              <SelectValue placeholder="Select limit" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="10">10</SelectItem>
+              <SelectItem value="25">25</SelectItem>
+              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="100">100</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center min-h-[200px] text-text-secondary text-lg">
+          Loading transfer history...
+        </div>
+      ) : !history || history.transfers.length === 0 ? (
+        <p className="text-text-secondary text-lg text-center py-8">No transfer history found with applied filters.</p>
+      ) : (
+        <>
+          <div className="max-h-[400px] overflow-y-auto pr-2">
+            {" "}
+            {/* Added scrollable container */}
+            <ul className="space-y-4">
+              {history.transfers.map((item) => {
+                const isSender = currentUser && item.from_user.email === currentUser.email
+                const direction = isSender ? "to" : "from"
+                const otherParty = isSender ? item.to_user : item.from_user
+                const amountClass = isSender ? "text-red-600" : "text-green-600"
+
+                return (
+                  <li
+                    key={item.id}
+                    className="bg-background p-4 rounded-lg shadow-sm flex items-center justify-between"
+                  >
+                    <div>
+                      <p className="text-base font-medium text-text-primary">
+                        <strong className={amountClass}>{item.amount} pts</strong> {direction}{" "}
+                        <strong>{otherParty.name}</strong>
+                      </p>
+                      <span className="text-sm text-text-secondary">{new Date(item.created_at).toLocaleString()}</span>
+                    </div>
+                    <span className="text-sm text-text-secondary">({otherParty.email})</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+
+          <div className="mt-8 text-lg font-semibold text-text-primary border-t border-border-light pt-4">
+            <p>
+              <strong>Total Sent:</strong> <span className="text-red-600">{history.total_sent} pts</span>
+            </p>
+            <p>
+              <strong>Total Received:</strong> <span className="text-green-600">{history.total_received} pts</span>
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+        
